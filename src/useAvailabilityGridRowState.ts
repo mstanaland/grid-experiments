@@ -1,31 +1,28 @@
 import {
   type CalendarDate,
-  DateDuration,
   isSameDay,
   maxDate,
   minDate,
-  toCalendarDate,
 } from "@internationalized/date";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { RangeValue } from "./types/AvailabilityGridState.types";
-import { constrainValue, previousAvailableDate, checkValidity } from "./utils";
-
-// type FacilityAvailability = Record<
-//   string,
-//   {
-//     site: string;
-//     availabilities: Record<string, string>;
-//   }
-// >;
+import { RangeValue } from "./types/AvailabilityGrid.types";
+import {
+  constrainValue,
+  previousAvailableDate,
+  checkValidity,
+  nextUnavailableDate,
+  makeRange,
+} from "./utils";
+import { type AvailabilityGridState } from "./useAvailabilityGridState";
 
 export type SiteAvailabilities = Record<string, string>;
 
 export interface AvailabilityGridRowStateOptions {
+  gridState: AvailabilityGridState;
+  rowIndex: number;
   value?: RangeValue<CalendarDate>;
   defaultValue?: RangeValue<CalendarDate>;
   onChange?: (value: RangeValue<CalendarDate> | null) => void;
-  visibleStartDate: CalendarDate;
-  visibleDuration?: DateDuration;
   minValue?: CalendarDate;
   maxValue?: CalendarDate;
   allowsNonContiguousRanges?: boolean;
@@ -38,31 +35,41 @@ export function useAvailabilityGridRowState(
   props: AvailabilityGridRowStateOptions,
 ) {
   const {
+    gridState,
+    rowIndex,
     value: valueProp,
     defaultValue,
     onChange,
-    visibleDuration = { days: 10 },
     minValue,
     maxValue,
-    visibleStartDate,
     siteAvailabilities,
     isInvalid,
   } = props;
-
   const [interactionStartDate, setInteractionStartDate] =
     useState<CalendarDate | null>(null);
   const [interactionEndDate, setInteractionEndDate] =
     useState<CalendarDate | null>(null);
   const [anchorDate, setAnchorDateState] = useState<CalendarDate | null>(null);
-  const [focusedDate, setFocusedDate] = useState<CalendarDate | null>(null);
-  const [isFocused, setFocused] = useState(false);
+
   const [isDragging, setDragging] = useState(false);
 
   const [value, setValue] = useState<RangeValue<CalendarDate> | null>(
     valueProp ?? defaultValue ?? null,
   );
 
-  const visibleEndDate = visibleStartDate.add(visibleDuration);
+  const isDateUnavailable = useCallback(
+    (date: CalendarDate) => {
+      const dateKey = date.toString();
+      return siteAvailabilities[dateKey] !== "Available";
+    },
+    [siteAvailabilities],
+  );
+
+  const { focusedDate, setFocusedDate } = gridState;
+
+  // const [focusedDate, setFocusedDate] = useState<CalendarDate | null>(
+  //   gridState.visibleStartDate,
+  // );
 
   // Available range must be stored in a ref so we have access to the updated version immediately in `isInvalid`.
   const availableRangeRef = useRef<Partial<RangeValue<CalendarDate>> | null>(
@@ -80,33 +87,19 @@ export function useAvailabilityGridRowState(
     [maxValue, availableRange],
   );
 
-  const isDateUnavailable = useCallback(
-    (date: CalendarDate) => {
-      // if (min && min.compare(date) < 0) {
-      //   return true;
-      // }
-      // if (max && max.compare(date) > 0) {
-      //   return true;
-      // }
-      const dateKey = date.toString();
-      return siteAvailabilities[dateKey] !== "Available";
-    },
-    [siteAvailabilities],
-  );
-
   const updateAvailableRange = (date: CalendarDate | null) => {
     if (date && !props.allowsNonContiguousRanges) {
       const nextAvailableStartDate = nextUnavailableDate(
         date,
-        visibleStartDate,
-        visibleEndDate,
+        gridState.visibleStartDate,
+        gridState.visibleEndDate,
         isDateUnavailable,
         -1,
       );
       const nextAvailableEndDate = nextUnavailableDate(
         date,
-        visibleStartDate,
-        visibleEndDate,
+        gridState.visibleStartDate,
+        gridState.visibleEndDate,
         isDateUnavailable,
         1,
       );
@@ -139,7 +132,7 @@ export function useAvailabilityGridRowState(
     const constrainedDate = constrainValue(date, min, max);
     const previousAvailableConstrainedDate = previousAvailableDate(
       constrainedDate,
-      visibleStartDate,
+      gridState.visibleStartDate,
       isDateUnavailable,
     );
 
@@ -180,10 +173,17 @@ export function useAvailabilityGridRowState(
     }
   };
 
+  if (focusedDate && checkValidity(focusedDate, min, max)) {
+    // If the focused date was moved to an invalid value, it can't be focused, so constrain it.
+    setFocusedDate(constrainValue(focusedDate, min, max));
+  }
+
   // Sets focus to a specific cell date
   function focusCell(date: CalendarDate) {
-    date = constrainValue(date, minValue, maxValue);
+    date = constrainValue(date, min, max);
     setFocusedDate(date);
+    gridState.setFocused(true);
+    gridState.setFocusedRow(rowIndex);
   }
 
   const isInvalidSelection = useMemo(() => {
@@ -199,10 +199,9 @@ export function useAvailabilityGridRowState(
     }
 
     return (
-      checkValidity(value.start, minValue, maxValue) ||
-      checkValidity(value.end, minValue, maxValue)
+      checkValidity(value.start, min, max) || checkValidity(value.end, min, max)
     );
-  }, [isDateUnavailable, value, anchorDate, minValue, maxValue]);
+  }, [isDateUnavailable, value, anchorDate, min, max]);
 
   const isValueInvalid = isInvalid || isInvalidSelection;
 
@@ -221,6 +220,9 @@ export function useAvailabilityGridRowState(
     setInteractionStartDate,
     interactionEndDate,
     setInteractionEndDate,
+    focusedDate,
+    setFocused: gridState.setFocused,
+    rowIndex,
     selectFocusedDate() {
       if (focusedDate) {
         selectDate(focusedDate);
@@ -251,12 +253,31 @@ export function useAvailabilityGridRowState(
     getAvailability: (date: CalendarDate) => {
       return siteAvailabilities[date.toString()];
     },
+    isRowFocused: gridState.focusedRow === rowIndex,
     isCellFocused(date: CalendarDate) {
-      return isFocused && focusedDate && isSameDay(date, focusedDate);
+      return (
+        gridState.isFocused &&
+        this.isRowFocused &&
+        focusedDate &&
+        isSameDay(date, focusedDate)
+      );
     },
-    setFocusedDate(date: CalendarDate) {
-      focusCell(date);
-      setFocused(true);
+    setFocusedDate(date: CalendarDate | null) {
+      if (date) {
+        focusCell(date);
+      } else {
+        gridState.setFocusedDate(null);
+      }
+    },
+    focusNextDay() {
+      if (focusedDate) {
+        focusCell(focusedDate.add({ days: 1 }));
+      }
+    },
+    focusPreviousDay() {
+      if (focusedDate) {
+        focusCell(focusedDate.subtract({ days: 1 }));
+      }
     },
     isInvalid(date: CalendarDate) {
       return checkValidity(
@@ -268,8 +289,8 @@ export function useAvailabilityGridRowState(
     isCellDisabled(date: CalendarDate) {
       return (
         props.isDisabled ||
-        date.compare(visibleStartDate) < 0 ||
-        date.compare(visibleEndDate) > 0 ||
+        date.compare(gridState.visibleStartDate) < 0 ||
+        date.compare(gridState.visibleEndDate) > 0 ||
         this.isInvalid(date)
       );
     },
@@ -287,43 +308,6 @@ export function useAvailabilityGridRowState(
 //   return Boolean(siteAvailabilities[dateKey]);
 // }
 
-function makeRange(
-  start: CalendarDate,
-  end: CalendarDate | null,
-): RangeValue<CalendarDate> | null {
-  if (!start || !end) {
-    return null;
-  }
-
-  if (end.compare(start) < 0) {
-    [start, end] = [end, start];
-  }
-
-  return { start: toCalendarDate(start), end: toCalendarDate(end) };
-}
-
-function nextUnavailableDate(
-  anchorDate: CalendarDate,
-  visibleStart: CalendarDate,
-  visibleEnd: CalendarDate,
-  isDateUnavailable: (date: CalendarDate) => boolean,
-  dir: number,
-): CalendarDate | undefined {
-  let nextDate = anchorDate.add({ days: dir });
-  while (
-    (dir < 0
-      ? nextDate.compare(visibleStart) >= 0
-      : nextDate.compare(visibleEnd) <= 0) &&
-    !isDateUnavailable(nextDate)
-  ) {
-    nextDate = nextDate.add({ days: dir });
-  }
-
-  if (isDateUnavailable(nextDate)) {
-    return nextDate.add({ days: -dir });
-  }
-}
-
-export type AvailabilityGridState = ReturnType<
+export type AvailabilityGridRowState = ReturnType<
   typeof useAvailabilityGridRowState
 >;

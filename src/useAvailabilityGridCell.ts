@@ -1,8 +1,8 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isSameDay, type CalendarDate } from "@internationalized/date";
 import { mergeProps, usePress } from "react-aria";
 
-import type { AvailabilityGridState } from "./useAvailabilityGridRowState";
+import type { AvailabilityGridRowState } from "./useAvailabilityGridRowState";
 
 export interface AvailabilityGridCellProps {
   /** The date that this cell represents. */
@@ -13,11 +13,14 @@ export interface AvailabilityGridCellProps {
 
 export function useAvailabilityGridCell(
   props: AvailabilityGridCellProps,
-  state: AvailabilityGridState,
+  state: AvailabilityGridRowState,
+  ref: React.RefObject<HTMLElement | null>,
 ) {
   const { date } = props;
 
   let isSelected = state.isSelected(date);
+
+  const isCellFocused = state.isCellFocused(date);
   const availability = state.getAvailability(date);
   const isUnavailable = state.isDateUnavailable(date);
   const isDisabled = props.isDisabled || state.isCellDisabled(date);
@@ -33,9 +36,39 @@ export function useAvailabilityGridCell(
     isSelected = true;
   }
 
+  const isStartOfRange =
+    state.highlightedRange?.start &&
+    isSameDay(date, state.highlightedRange.start);
+
+  const isMiddleOfRange =
+    state.highlightedRange?.start &&
+    state.highlightedRange?.end &&
+    date.compare(state.highlightedRange.start) > 0 &&
+    date.compare(state.highlightedRange.end) < 0;
+
+  const isEndOfRange =
+    state.highlightedRange?.end && isSameDay(date, state.highlightedRange.end);
+
   const isAnchorPressed = useRef(false);
   const isRangeBoundaryPressed = useRef(false);
   const touchDragTimerRef = useRef<number | undefined>();
+
+  useEffect(() => {
+    if (ref.current && isCellFocused) {
+      ref.current?.focus();
+    }
+  }, [isCellFocused, ref]);
+
+  let tabIndex: number | undefined = undefined;
+  if (!isDisabled && state.focusedDate) {
+    tabIndex =
+      state.isRowFocused && isSameDay(date, state.focusedDate) ? 0 : -1;
+  }
+
+  const closeButtonPress = usePress({
+    onPress: state.deselectDates,
+  });
+
   const { pressProps, isPressed } = usePress({
     // When dragging to select a range, we don't want dragging over the original anchor
     // again to trigger onPressStart. Cancel presses immediately when the pointer exits.
@@ -47,7 +80,6 @@ export function useAvailabilityGridCell(
         !state.anchorDate &&
         (e.pointerType === "mouse" || e.pointerType === "touch")
       ) {
-        state.setInteractionStartDate(date);
         // Allow dragging the start or end date of a range to modify it
         // rather than starting a new selection.
         // Don't allow dragging when invalid, or weird jumping behavior may occur as date ranges
@@ -56,13 +88,13 @@ export function useAvailabilityGridCell(
           if (isSameDay(date, state.highlightedRange.start)) {
             state.setAnchorDate(state.highlightedRange.end);
             state.setFocusedDate(date);
-            state.setDragging(true);
+            // state.setDragging(true);
             isRangeBoundaryPressed.current = true;
             return;
           } else if (isSameDay(date, state.highlightedRange.end)) {
             state.setAnchorDate(state.highlightedRange.start);
             state.setFocusedDate(date);
-            state.setDragging(true);
+            // state.setDragging(true);
             isRangeBoundaryPressed.current = true;
             return;
           }
@@ -104,12 +136,10 @@ export function useAvailabilityGridCell(
 
       if (
         state.value &&
-        state.interactionStartDate &&
-        isSameDay(date, state.interactionStartDate) &&
+        !state.anchorDate &&
         isSameDay(date, state.value.end)
       ) {
-        state.setInteractionEndDate(null);
-        state.setInteractionStartDate(null);
+        // setInteractionStartDate(null);
         state.deselectDates();
         return;
       } else if (isRangeBoundaryPressed.current) {
@@ -139,9 +169,6 @@ export function useAvailabilityGridCell(
         state.selectDate(date);
         state.setFocusedDate(date);
       }
-
-      state.setInteractionEndDate(null);
-      state.setInteractionStartDate(null);
     },
   });
 
@@ -153,11 +180,12 @@ export function useAvailabilityGridCell(
       "aria-invalid": isInvalid || undefined,
     },
     buttonProps: mergeProps(pressProps, {
-      tabIndex: isUnavailable ? undefined : 0,
+      tabIndex,
       role: "button",
       "aria-disabled": isDisabled,
       "aria-label": undefined,
       "aria-invalid": undefined,
+      "data-grid-cell": true,
       onPointerEnter(event: PointerEvent) {
         // Highlight the date on hover or drag over a date when selecting a range.
         if (
@@ -181,10 +209,14 @@ export function useAvailabilityGridCell(
         event.preventDefault();
       },
     }),
+    closeButtonProps: closeButtonPress.pressProps,
     isSelected,
     isPressed,
     availability,
     isUnavailable,
     isDisabled,
+    isStartOfRange,
+    isMiddleOfRange,
+    isEndOfRange,
   };
 }

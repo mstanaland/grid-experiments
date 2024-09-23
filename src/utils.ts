@@ -5,9 +5,65 @@ import {
   toCalendarDate,
 } from "@internationalized/date";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import type { RangeValue } from "./types/AvailabilityGrid.types";
 
 export interface RefObject<T> {
   current: T;
+}
+
+export function makeRange(
+  start: CalendarDate,
+  end: CalendarDate | null,
+): RangeValue<CalendarDate> | null {
+  if (!start || !end) {
+    return null;
+  }
+
+  if (end.compare(start) < 0) {
+    [start, end] = [end, start];
+  }
+
+  return { start: toCalendarDate(start), end: toCalendarDate(end) };
+}
+
+export function firstAvailableDate(
+  visibleStart: CalendarDate,
+  visibleEnd: CalendarDate,
+  isDateUnavailable: (date: CalendarDate) => boolean,
+): CalendarDate | null {
+  const diffToEnd = visibleEnd.compare(visibleStart);
+
+  for (let i = 0; i < diffToEnd; i += 1) {
+    const dateToCheck = visibleStart.add({ days: i });
+    const isUnavailable = isDateUnavailable(dateToCheck);
+    if (!isUnavailable) {
+      return dateToCheck;
+    }
+  }
+
+  return null;
+}
+
+export function nextUnavailableDate(
+  anchorDate: CalendarDate,
+  visibleStart: CalendarDate,
+  visibleEnd: CalendarDate,
+  isDateUnavailable: (date: CalendarDate) => boolean,
+  dir: number,
+): CalendarDate | undefined {
+  let nextDate = anchorDate.add({ days: dir });
+  while (
+    (dir < 0
+      ? nextDate.compare(visibleStart) >= 0
+      : nextDate.compare(visibleEnd) <= 0) &&
+    !isDateUnavailable(nextDate)
+  ) {
+    nextDate = nextDate.add({ days: dir });
+  }
+
+  if (isDateUnavailable(nextDate)) {
+    return nextDate.add({ days: -dir });
+  }
 }
 
 export function checkValidity(

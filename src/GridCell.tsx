@@ -7,47 +7,40 @@ import {
   CheckIcon,
 } from "@heroicons/react/16/solid";
 
-import { isSameDay, type CalendarDate } from "@internationalized/date";
+import { type CalendarDate } from "@internationalized/date";
 
 import { useAvailabilityGridCell } from "./useAvailabilityGridCell";
 
-import { type AvailabilityGridState } from "./useAvailabilityGridRowState";
+import { type AvailabilityGridRowState } from "./useAvailabilityGridRowState";
+import { mergeProps, useFocusRing } from "react-aria";
 
 interface GridCellProps {
-  state: AvailabilityGridState;
+  state: AvailabilityGridRowState;
   date: CalendarDate;
   siteId: string;
 }
 
 export function GridCell({ state, date, siteId }: GridCellProps) {
-  const ref = React.useRef(null);
+  const ref = React.useRef<HTMLDivElement>(null);
   const {
     cellProps,
     buttonProps,
+    closeButtonProps,
     isSelected,
     availability,
     isUnavailable,
     isDisabled,
-  } = useAvailabilityGridCell({ date, siteId }, state);
+    isEndOfRange,
+    isStartOfRange,
+    isMiddleOfRange,
+  } = useAvailabilityGridCell({ date, siteId }, state, ref);
 
-  const isEndOfRange =
-    !state.isDragging &&
-    !state.anchorDate &&
-    state.value?.end &&
-    state.highlightedRange?.end &&
-    isSameDay(date, state.value.end);
+  const { focusProps, isFocusVisible } = useFocusRing();
 
-  const isStart =
-    state.highlightedRange?.start &&
-    isSameDay(date, state.highlightedRange.start);
-  const isEnd =
-    state.highlightedRange?.end && isSameDay(date, state.highlightedRange.end);
-  const isMiddle =
-    state.highlightedRange?.start &&
-    state.highlightedRange?.end &&
-    date.compare(state.highlightedRange.start) > 0 &&
-    date.compare(state.highlightedRange.end) < 0;
   const isSelecting = Boolean(state.anchorDate);
+
+  const isSettledEndOfRange = !isSelecting && isEndOfRange;
+
   const isSelectingStart =
     state.anchorDate &&
     state.highlightedRange &&
@@ -57,15 +50,16 @@ export function GridCell({ state, date, siteId }: GridCellProps) {
     state.highlightedRange &&
     state.anchorDate?.compare(state.highlightedRange.end) < 0;
 
-  console.log({ isSelectingStart, isSelectingEnd });
-
   return (
     <td {...cellProps} className="relative bg-white p-0">
       <div
-        {...buttonProps}
+        {...mergeProps(buttonProps, focusProps)}
         ref={ref}
         className={cx(
-          "flex size-12 items-center justify-center border border-white p-1 transition-colors",
+          "group flex size-12 items-center justify-center border border-white p-1 outline-none transition-colors",
+          isFocusVisible
+            ? "group-focus:z-2 ring-2 ring-inset ring-blue-700"
+            : "",
           {
             "bg-slate-50 text-slate-400": isUnavailable || isDisabled,
             "bg-blue-100 text-blue-800": !isUnavailable && !isDisabled,
@@ -75,13 +69,13 @@ export function GridCell({ state, date, siteId }: GridCellProps) {
         <div
           className={cx(
             "absolute flex h-8 items-center justify-center",
-            isStart && isEnd
+            isStartOfRange && isEndOfRange
               ? "left-2 w-8 rounded-md"
-              : isStart
+              : isStartOfRange
                 ? "left-2 w-12 rounded-l-md border-l"
-                : isMiddle
+                : isMiddleOfRange
                   ? "w-12"
-                  : isEnd
+                  : isEndOfRange
                     ? "right-2 w-10 rounded-r-md border-r"
                     : "w-12 rounded-none",
             {
@@ -93,19 +87,19 @@ export function GridCell({ state, date, siteId }: GridCellProps) {
             },
           )}
         >
-          {isStart && isEnd && !isSelecting ? (
+          {isStartOfRange && isEndOfRange && !isSelecting ? (
             <CheckIcon className="size-6 opacity-60" />
-          ) : isStart && isEnd && isSelecting ? (
+          ) : isStartOfRange && isEndOfRange && isSelecting ? (
             <ChevronDoubleRightIcon className="size-6 opacity-60" />
-          ) : isStart && !isSelecting ? (
+          ) : isStartOfRange && !isSelecting ? (
             <CheckIcon className="relative -left-1 size-6 opacity-60" />
-          ) : isStart && isSelecting ? (
+          ) : isStartOfRange && isSelecting ? (
             <ChevronDoubleRightIcon className="relative -left-1 size-6 opacity-60" />
-          ) : isEnd && !isSelecting ? (
+          ) : isEndOfRange && !isSelecting ? (
             <CheckIcon className="relative size-6 opacity-60" />
-          ) : isEnd && isSelecting ? (
+          ) : isEndOfRange && isSelecting ? (
             <ChevronDoubleLeftIcon className="relative size-6 opacity-60" />
-          ) : isMiddle ? (
+          ) : isMiddleOfRange ? (
             ""
           ) : availability === "Available" ? (
             "A"
@@ -115,7 +109,8 @@ export function GridCell({ state, date, siteId }: GridCellProps) {
         </div>
       </div>
 
-      {(isSelectingEnd && isEnd) || (isSelecting && isStart && isEnd) ? (
+      {(isSelectingEnd && isEndOfRange) ||
+      (isSelecting && isStartOfRange && isEndOfRange) ? (
         <div
           className={cx(
             "pointer-events-none absolute z-20 whitespace-nowrap rounded-full bg-slate-900 px-2 py-0.5 text-xs leading-none text-white shadow-sm",
@@ -124,7 +119,7 @@ export function GridCell({ state, date, siteId }: GridCellProps) {
         >
           Choose end date
         </div>
-      ) : isSelectingStart && isStart ? (
+      ) : isSelectingStart && isStartOfRange ? (
         <div
           className={cx(
             "pointer-events-none absolute z-20 whitespace-nowrap rounded-full bg-slate-900 px-2 py-0.5 text-xs leading-none text-white shadow-sm",
@@ -135,17 +130,20 @@ export function GridCell({ state, date, siteId }: GridCellProps) {
         </div>
       ) : null}
 
-      <button
-        onClick={state.deselectDates}
-        className={cx(
-          "absolute -right-2 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-full border-2 border-solid border-white bg-red-500 leading-none text-white shadow-sm transition-all",
-          isEndOfRange
-            ? "visible scale-100 opacity-100"
-            : "invisible scale-0 opacity-0",
-        )}
-      >
-        <XMarkIcon className="size-4" />
-      </button>
+      {isEndOfRange ? (
+        <button
+          {...closeButtonProps}
+          // tabIndex={-1}
+          className={cx(
+            "absolute -right-2 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-full border-2 border-solid border-white bg-red-500 leading-none text-white shadow-sm transition-all",
+            isSettledEndOfRange
+              ? "visible scale-100 opacity-100"
+              : "invisible scale-0 opacity-0",
+          )}
+        >
+          <XMarkIcon className="size-4" />
+        </button>
+      ) : null}
     </td>
   );
 }
